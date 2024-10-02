@@ -7,7 +7,9 @@ import time
 from tqdm import tqdm
 import os
 import re
+import unicodedata
 from urllib.parse import urlparse
+import aiofiles
 
 
 # Function to determine max workers
@@ -42,18 +44,26 @@ async def download_image(url, folder, session):
             os.makedirs(folder, exist_ok=True)
 
             # Save the image to the folder
-            with open(os.path.join(folder, image_name), 'wb') as img_file:
-                img_file.write(image_data)
+            image_path = os.path.join(folder, image_name)
+            async with aiofiles.open(image_path, 'wb') as img_file:
+                await img_file.write(image_data)
 
-            print(f"Image saved: {os.path.join(folder, image_name)}")
+            return image_path
     except aiohttp.ClientError as err:
         print(f"Error downloading image {url}: {err}")
+        return None
+
+
+def remove_accents(input_str):
+    """Remove accents from the input string."""
+    nfkd_form = unicodedata.normalize('NFD', input_str)
+    return re.sub(r'[\u0300-\u036f]', '', nfkd_form).replace('đ', 'd').replace('Đ', 'D')
 
 
 def generate_product_sku(product_name):
     """Generate product SKU from product name."""
     product_sku = re.sub(r'[^\w\s]', '', product_name).lower().replace(' ', '_')
-    return product_sku
+    return remove_accents(product_sku)
 
 
 async def scrape_product_details(product_url, product_id, session):
@@ -123,14 +133,14 @@ async def scrape_page(url, start_product_id, session):
     """Fetch and parse a single page of products asynchronously."""
     html = await fetch_url(url, session)
     if not html:
-        return [], None
+        return [], None, start_product_id  # Return empty list, no next page, and unchanged product_id
 
     soup = BeautifulSoup(html, 'html.parser')
 
     # Find the main product list container
     products_container = soup.find('div', class_='products')
     if not products_container:
-        return [], None  # No products found, return empty list
+        return [], None, start_product_id  # No products found, return empty list, no next page, and unchanged product_id
 
     products = []
     product_id = start_product_id  # Initialize product ID for this page
@@ -178,35 +188,52 @@ async def crawl_wordpress_products(base_url, max_workers=None):
         print("Starting to scrape pages...")
         while current_url:
             print(f"Scraping page: {current_url}")
-            page_products, next_page_url, start_product_id = await scrape_page(current_url, start_product_id, session)
+            try:
+                page_products, next_page_url, start_product_id = await scrape_page(current_url, start_product_id, session)
+                
+                for product in page_products:
+                    all_product_data.append(product)
 
-            for product in page_products:
-                all_product_data.append(product)
-
-            current_url = next_page_url  # Move to the next page if available
+                current_url = next_page_url  # Move to the next page if available
+            except Exception as e:
+                print(f"Error scraping page {current_url}: {e}")
+                break  # Stop scraping if an error occurs
 
         print(f"Fetching details for {len(all_product_data)} products concurrently...")
         detailed_products = []
         tasks = [scrape_product_details(p['product_url'], p['product_id'], session) for p in all_product_data]
         
         for task in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Fetching Product Details"):
-            detailed_products.append(await task)
+            detailed_product = await task
+            if detailed_product:
+                detailed_products.append(detailed_product)
+
+        # Create a dictionary to map product_id to product_sku
+        id_to_sku = {p['product_id']: p['product_sku'] for p in detailed_products if 'product_sku' in p}
 
         # Download product images concurrently
         print("Downloading product images...")
-        image_tasks = [
-            download_image(p['image_url'], f"./images/{p['product_sku']}", session)
-            for p in detailed_products if 'image_url' in p
-        ]
+        image_tasks = []
+        for product in all_product_data:
+            if 'image_url' in product and product['product_id'] in id_to_sku:
+                product_sku = id_to_sku[product['product_id']]
+                image_url = product['image_url']
+                image_tasks.append(download_image(image_url, f"./images/{product_sku}", session))
         
-        await asyncio.gather(*image_tasks)
+        downloaded_images = []
+        for task in tqdm(asyncio.as_completed(image_tasks), total=len(image_tasks), desc="Downloading Images"):
+            result = await task
+            if result:
+                downloaded_images.append(result)
 
-    # Combine product data with image URLs
+        print(f"Successfully downloaded {len(downloaded_images)} images.")
+
+    # Combine product data with image URLs and detailed information
     final_products = []
-    for idx, product in enumerate(detailed_products):
-        if product:  # Ensure product is not empty
-            product['image_url'] = all_product_data[idx]['image_url']
-            final_products.append(product)
+    for detailed_product, original_product in zip(detailed_products, all_product_data):
+        if detailed_product:  # Ensure product is not empty
+            detailed_product['image_url'] = original_product['image_url']
+            final_products.append(detailed_product)
 
     # Remove duplicates based on product_id
     seen = set()
