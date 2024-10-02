@@ -4,3 +4,4 @@ tqdm
 aiohttp
 asyncio
 aiofiles
+Pillow
