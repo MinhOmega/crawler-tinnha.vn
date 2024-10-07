@@ -12,7 +12,6 @@ from urllib.parse import urlparse
 import aiofiles
 from image_optimizer import run_optimization
 
-
 # Function to determine max workers
 def get_max_workers():
     cpu_count = os.cpu_count()
@@ -66,6 +65,7 @@ def generate_product_sku(product_name):
     product_sku = re.sub(r'[^\w\s]', '', product_name).lower().replace(' ', '_')
     return remove_accents(product_sku)
 
+
 async def scrape_product_details(product_url, product_id, session):
     """Fetch product details from the product detail page asynchronously."""
     html = await fetch_url(product_url, session)
@@ -83,16 +83,37 @@ async def scrape_product_details(product_url, product_id, session):
         # Generate product SKU based on product name
         product_details['product_sku'] = generate_product_sku(product_details['product_name'])
 
+
     # Get the price (for simple products)
     price_tag = soup.find('p', class_='price')
+    product_details['price'] = ''
+    product_details['special_price'] = ''
+    base_price = 0
+
     if price_tag:
-        product_details['price'] = price_tag.text.strip().replace('₫', '').replace('&nbsp;', '')
+        # Check if the product has a special price (on sale)
+        regular_price_tag = price_tag.find('del')
+        special_price_tag = price_tag.find('ins')
+
+        # Extract the regular price if available
+        if regular_price_tag:
+            regular_price = regular_price_tag.find('bdi').text.strip()
+            product_details['price'] = regular_price.split('₫')[0].replace('.', '').replace(',', '').strip()
+
+        # Extract the special price if available
+        if special_price_tag:
+            special_price = special_price_tag.find('bdi').text.strip()
+            product_details['special_price'] = special_price.split('₫')[0].replace('.', '').replace(',', '').strip()
+
+        # If no regular price is found, use the main price as the regular price
+        if not product_details['price'] and price_tag.find('bdi'):
+            main_price = price_tag.find('bdi').text.strip()
+            product_details['price'] = main_price.split('₫')[0].replace('.', '').replace(',', '').strip()
 
     # Determine if the price is a single price or a range
-    base_price = 0
     if '-' not in product_details['price']:
         try:
-            base_price = int(product_details['price'].replace('.', ''))
+            base_price = int(product_details['price'])
         except ValueError:
             base_price = 0
 
@@ -108,6 +129,14 @@ async def scrape_product_details(product_url, product_id, session):
         for category_tag in category_tags.find_all('a', rel='tag'):
             categories.append(category_tag.text.strip())
         product_details['category'] = ', '.join(categories)
+
+    description_panel = soup.find('div', class_='woocommerce-Tabs-panel--description')
+    if description_panel:
+        # Extract the content while keeping HTML structure
+        description_content = description_panel.decode_contents().strip()
+
+        # Store the content in the product details with the key 'description'
+        product_details['description'] = description_content
 
     # Check if product is configurable and gather variations
     variation_form = soup.find('form', class_='variations_form cart')
@@ -288,7 +317,7 @@ async def crawl_wordpress_products(base_url, max_workers=None):
             detailed_product['image_url'] = original_product['image_url']
             final_products.append(detailed_product)
 
-    # Remove duplicates based on product_id
+    # Ensure all products have the same fields
     seen = set()
     unique_products = []
     for product in final_products:
@@ -299,7 +328,7 @@ async def crawl_wordpress_products(base_url, max_workers=None):
 
     # Export products to CSV
     with open('products.csv', mode='w', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=['product_id', 'product_name', 'product_sku', 'category', 'price', 'short_description', 'image_url', 'product_type', 'variations'])
+        writer = csv.DictWriter(file, fieldnames=['product_id', 'product_name', 'product_sku', 'category', 'price', 'special_price', 'description', 'short_description', 'image_url', 'product_type', 'variations'])
         writer.writeheader()
         for product in unique_products:
             # Convert variations to JSON string for CSV export
