@@ -10,6 +10,7 @@ import re
 import unicodedata
 from urllib.parse import urlparse
 import aiofiles
+from image_optimizer import run_optimization
 
 
 # Function to determine max workers
@@ -87,6 +88,14 @@ async def scrape_product_details(product_url, product_id, session):
     if price_tag:
         product_details['price'] = price_tag.text.strip().replace('₫', '').replace('&nbsp;', '')
 
+    # Determine if the price is a single price or a range
+    base_price = 0
+    if '-' not in product_details['price']:
+        try:
+            base_price = int(product_details['price'].replace('.', ''))
+        except ValueError:
+            base_price = 0
+
     # Get the product short description (including HTML formatting for CKEditor)
     short_description_tag = soup.find('div', class_='product-short-description')
     if short_description_tag:
@@ -141,6 +150,11 @@ async def scrape_product_details(product_url, product_id, session):
                             option_text = option.text.strip()
                             # Fetch the price from the attribute_price_map if available
                             option_price = attribute_price_map.get(attribute_code, {}).get(option_value, 0)
+
+                            # If option_price is 0 and the product has a single base price, use the base price
+                            if option_price == 0 and base_price > 0:
+                                option_price = base_price
+
                             options.append({
                                 'attribute_option_code': option_text,
                                 'attribute_option_price': option_price
@@ -216,24 +230,28 @@ async def crawl_wordpress_products(base_url, max_workers=None):
 
     async with aiohttp.ClientSession() as session:
         print("Starting to scrape pages...")
+        pbar = tqdm(total=None, desc="Scraping Pages", unit="page")
         while current_url:
-            print(f"Scraping page: {current_url}")
             try:
                 page_products, next_page_url, start_product_id = await scrape_page(current_url, start_product_id, session)
                 
                 for product in page_products:
                     all_product_data.append(product)
 
+                pbar.update(1)
+                pbar.set_postfix_str(f"Current URL: {current_url}")
+                
                 current_url = next_page_url  # Move to the next page if available
             except Exception as e:
-                print(f"Error scraping page {current_url}: {e}")
+                print(f"\nError scraping page {current_url}: {e}")
                 break  # Stop scraping if an error occurs
+        pbar.close()
 
-        print(f"Fetching details for {len(all_product_data)} products concurrently...")
+        print(f"\nFetching details for {len(all_product_data)} products concurrently...")
         detailed_products = []
         tasks = [scrape_product_details(p['product_url'], p['product_id'], session) for p in all_product_data]
         
-        for task in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Fetching Product Details"):
+        for task in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Fetching Product Details", unit="product"):
             detailed_product = await task
             if detailed_product:
                 detailed_products.append(detailed_product)
@@ -251,12 +269,17 @@ async def crawl_wordpress_products(base_url, max_workers=None):
                 image_tasks.append(download_image(image_url, f"./images/{product_sku}", session))
         
         downloaded_images = []
-        for task in tqdm(asyncio.as_completed(image_tasks), total=len(image_tasks), desc="Downloading Images"):
+        for task in tqdm(asyncio.as_completed(image_tasks), total=len(image_tasks), desc="Downloading Images", unit="image"):
             result = await task
             if result:
                 downloaded_images.append(result)
 
         print(f"Successfully downloaded {len(downloaded_images)} images.")
+
+        # Add the image optimization step here
+        print("Optimizing downloaded images...")
+        optimized_images = await run_optimization("./images", "./optimized_images")
+        print(f"Successfully optimized {len(optimized_images)} images.")
 
     # Combine product data with image URLs and detailed information
     final_products = []

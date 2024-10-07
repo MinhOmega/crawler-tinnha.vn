@@ -42,14 +42,20 @@ async def optimize_images_in_folder(input_folder, output_folder):
                 image_path = os.path.join(root, file)
                 relative_path = os.path.relpath(root, input_folder)
                 output_subfolder = os.path.join(output_folder, relative_path)
-                tasks.append(optimize_image(image_path, output_subfolder))
+                tasks.append((image_path, output_subfolder))
     
+    # Create the progress bar
+    progress_bar = tqdm(total=len(tasks), desc="Optimizing Images", unit="image")
+    
+    # Run tasks with progress update
     optimized_images = []
-    for task in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc="Optimizing Images"):
-        result = await task
+    for image_path, output_subfolder in tasks:
+        result = await optimize_image(image_path, output_subfolder)
         if result:
             optimized_images.append(result)
+        progress_bar.update(1)  # Update progress bar after each image is processed
     
+    progress_bar.close()
     return optimized_images
 
 async def run_optimization(input_folder="./images", output_folder="./optimized_images"):
