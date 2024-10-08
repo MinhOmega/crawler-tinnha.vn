@@ -311,10 +311,13 @@ async def crawl_wordpress_products(base_url, max_workers=None):
         print(f"Successfully optimized {len(optimized_images)} images.")
 
     # Combine product data with image URLs and detailed information
+    # Map product_id to image_url for accurate assignment
+    product_id_to_image_url = {p['product_id']: p['image_url'] for p in all_product_data}
+
     final_products = []
-    for detailed_product, original_product in zip(detailed_products, all_product_data):
-        if detailed_product:  # Ensure product is not empty
-            detailed_product['image_url'] = original_product['image_url']
+    for detailed_product in detailed_products:
+        if detailed_product and detailed_product['product_id'] in product_id_to_image_url:
+            detailed_product['image_url'] = product_id_to_image_url[detailed_product['product_id']]
             final_products.append(detailed_product)
 
     # Ensure all products have the same fields
