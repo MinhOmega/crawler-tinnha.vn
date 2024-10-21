@@ -86,8 +86,8 @@ async def scrape_product_details(product_url, product_id, session):
 
     # Get the price (for simple products)
     price_tag = soup.find('p', class_='price')
-    product_details['price'] = ''
-    product_details['special_price'] = ''
+    product_details['price'] = 0
+    product_details['special_price'] = 0
     base_price = 0
 
     if price_tag:
@@ -98,24 +98,20 @@ async def scrape_product_details(product_url, product_id, session):
         # Extract the regular price if available
         if regular_price_tag:
             regular_price = regular_price_tag.find('bdi').text.strip()
-            product_details['price'] = regular_price.split('₫')[0].replace('.', '').replace(',', '').strip()
+            product_details['price'] = int(regular_price.split('₫')[0].replace('.', '').replace(',', '').strip() or 0)
 
         # Extract the special price if available
         if special_price_tag:
             special_price = special_price_tag.find('bdi').text.strip()
-            product_details['special_price'] = special_price.split('₫')[0].replace('.', '').replace(',', '').strip()
+            product_details['special_price'] = int(special_price.split('₫')[0].replace('.', '').replace(',', '').strip() or 0)
 
         # If no regular price is found, use the main price as the regular price
-        if not product_details['price'] and price_tag.find('bdi'):
+        if product_details['price'] == 0 and price_tag.find('bdi'):
             main_price = price_tag.find('bdi').text.strip()
-            product_details['price'] = main_price.split('₫')[0].replace('.', '').replace(',', '').strip()
+            product_details['price'] = int(main_price.split('₫')[0].replace('.', '').replace(',', '').strip() or 0)
 
     # Determine if the price is a single price or a range
-    if '-' not in product_details['price']:
-        try:
-            base_price = int(product_details['price'])
-        except ValueError:
-            base_price = 0
+    base_price = product_details['price']
 
     # Get the product short description (including HTML formatting for CKEditor)
     short_description_tag = soup.find('div', class_='product-short-description')
@@ -337,6 +333,9 @@ async def crawl_wordpress_products(base_url, max_workers=None):
             # Convert variations to JSON string for CSV export
             if isinstance(product['variations'], list):
                 product['variations'] = json.dumps(product['variations'])
+            # Ensure price and special_price are integers
+            product['price'] = int(product['price'])
+            product['special_price'] = int(product['special_price'])
             writer.writerow(product)
 
     print(f"Extracted {len(unique_products)} unique products. Data exported to products.csv")

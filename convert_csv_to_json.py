@@ -1,6 +1,5 @@
 import csv
 import json
-import re
 
 def convert_csv_to_json(csv_file_path, json_file_path):
     # List to store the converted data
@@ -21,15 +20,22 @@ def convert_csv_to_json(csv_file_path, json_file_path):
             else:
                 row['variations'] = []
             
-            # Handle price ranges and convert to string
-            price_str = row['price'].replace(',', '').strip()
-            prices = re.findall(r'\d+', price_str)
-            if len(prices) == 1:
-                row['price'] = prices[0]
-            elif len(prices) > 1:
-                row['price'] = f"{prices[0]} - {prices[-1]}"
-            else:
-                row['price'] = "0"  # Default value if no valid price is found
+            # Convert price and special_price to integers
+            try:
+                row['price'] = int(float(row['price']))
+            except ValueError:
+                row['price'] = 0  # Default to 0 if conversion fails
+
+            try:
+                row['special_price'] = int(float(row['special_price']))
+            except ValueError:
+                row['special_price'] = 0  # Default to 0 if conversion fails
+
+            # Convert product_id to integer
+            try:
+                row['product_id'] = int(row['product_id'])
+            except ValueError:
+                row['product_id'] = 0  # Default to 0 if conversion fails
             
             # Append the processed row to the data list
             data.append(row)
