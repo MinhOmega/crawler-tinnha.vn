@@ -170,9 +170,11 @@ async def scrape_product_details(product_url, product_id, session):
                     options = []
                     for option in select.find_all('option'):
                         option_value = option.get('value', '')
-                        if option_value:
+                        option_text = option.text.strip()
+
+                        # Skip default option with empty value
+                        if option_value:  
                             # Get the display text for the option
-                            option_text = option.text.strip()
                             # Fetch the price from the attribute_price_map if available
                             option_price = attribute_price_map.get(attribute_code, {}).get(option_value, 0)
 
@@ -237,7 +239,6 @@ async def scrape_page(url, start_product_id, session):
     next_page_url = next_page_link['href'] if next_page_link else None
 
     return products, next_page_url, product_id  # Return the updated product_id
-
 
 async def crawl_wordpress_products(base_url, max_workers=None):
     """Crawl all products from the shop until the last page asynchronously."""
