@@ -5,3 +5,4 @@ aiohttp
 asyncio
 aiofiles
 Pillow
+pillow-avif-plugin
